@@ -1,0 +1,66 @@
+---
+title: "Charity Project P2"
+output: html_document
+---
+
+Author: Ricardo Herena
+Class: 422 Section 57
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/Machine Learning Pred 422/Charity Project/Regression Part 2")
+
+```
+
+\newpage
+
+
+
+```{r Data Transformation}
+
+train <- read.csv('trainSample.csv', stringsAsFactors = TRUE, na.strings=c("NA"," "))
+
+na_count <-sapply(train, function(y) sum(is.na(y)))
+na_count <- data.frame(na_count)
+
+
+
+train$HOME = as.factor(train$HOME)
+train$HINC = as.factor(train$HINC)
+
+```
+
+```{r Transformation Summary}
+
+```
+
+```{r Data Sample_Test}
+
+
+```
+
+
+```{r Model Fitting}
+
+```
+
+
+```{r Model Validation}
+
+```
+
+
+```{r Seletion_Summary}
+
+```
+
+
+
+
+
+
+
+```{r}
+
+```
+

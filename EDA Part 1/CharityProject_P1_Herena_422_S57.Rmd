@@ -1,0 +1,474 @@
+---
+title: "Charity Project"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+#### Author: Ricardo Herena
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+setwd("~/Documents/Machine Learning Pred 422/Charity Project")
+library(gridExtra)
+library(ggplot2)
+library(reshape2)
+library(plyr)
+
+
+```
+
+
+## Introduction
+
+Below we will explore our charity dataset with the mindset of solving a classification and a ev problem. According to our mailing data set, the average response is around 5.1% of those who responded the average donation was $15.62. Since cost to send a mail set costs $.99 it is implausible to send mailers to everyone. 
+
+As such we would like to develop models to identify good candidates for mailers, who are most likely to donate and donate large amounts. Our report is laid out below in order: data transformations / summary, General EDA, EDA for classification, EDA section for classification, and principle components analysis. 
+
+## Data Transformations, Cleaning and Summary
+
+After reading our data, we transformed DONR, HOME and HINC into factors. In addition we transformed all other text variables to factors. We also summarize the NA's per variable, data types, and the locational data including mean/median below.  
+
+```{r read_summarize_data}
+
+train <- read.csv('trainSample.csv', stringsAsFactors = TRUE, na.strings=c("NA"," "))
+
+na_count <-sapply(train, function(y) sum(is.na(y)))
+na_count <- data.frame(na_count)
+
+
+
+train$HOME = as.factor(train$HOME)
+train$HINC = as.factor(train$HINC)
+
+summary(train)
+sapply(train, class)
+na_count
+
+```
+
+
+## General EDA for Response Variables  
+
+Starting with our response variables DAMT we can see 67,234 of the DAMT are 0, and 3637 are greater than zero. For those that did respond the median DAMT was $14. Ranges from 1 - 200 with most values coming in 10 - 20. 
+```{r GEN_EDA}
+par(mfrow=c(1,1))
+
+summary(train$DONR)
+summary(train$DAMT[train$DAMT > 0])
+
+counts <- table(train$DONR)
+barplot(counts, main="", horiz=TRUE,
+  names.arg=c("Donation > 0", "No Response"), col = "red")
+
+par(mfrow=c(1,2))
+hist(train$DAMT[train$DAMT > 0],breaks = 20, col = "blue", 
+     main = "Donation Amounts > 0", xlab = "Donation")
+hist(train$DAMT,breaks = 20, col = "blue", 
+     main = "Donation Amounts Incl 0", xlab = "Donation")
+
+
+```
+
+
+## EDA for Regression modeling of DAMT
+
+Below we have plotted the pairwise correlation of the numeric variables. This excludes, HOME, HINC, Gender and RFA_96. 
+
+We can see negative correlations to DAMT for: AGE, MEDAGE, NUMPROM, NGIFTALL.
+
+We can see positive correlations to DAMT for: MEDPPH, MEDHVAL, MEDINC, MEDEDUC, NUMPRM12, RAMNTALL, MAXRAMNT, LASTGIFT, TDON.
+
+```{r EDA_REG_1}
+
+c <- train[train$DAMT > 0,c(3:4,8:19)]
+
+cor(c, use="p")[1,]
+
+qplot(x=Var1, y=Var2, data=melt(cor(c, use="p")), fill=value, geom="tile") + scale_fill_gradient2(limits=c(-1, 1)) + theme(text = element_text(size=8),
+        axis.text.x = element_text(angle=60, hjust=1)) 
+
+
+
+```
+
+
+Next we will explore our basic donor characteristics including Age, Homeownership, Income bracket, Gender. For each we took the mean donation amount across the catagories listed.
+
+Age and homeownership appear to have constant DAMT across categories. 
+
+Gender appears to have some erroneous categories including A, but for M/F it appears to not make much of a difference. Importantly joint account holders are have a lower DAMT. 
+
+Income categories seem to have a positive relationship to donation amount.
+
+
+```{r EDA_REG_2}
+tDAMT <- train[train$DAMT > 0,]
+agemeans <- ddply(tDAMT, .(AGE), summarize,  DAMT=mean(DAMT))
+homemeans <- ddply(tDAMT, .(HOME), summarize,  DAMT=mean(DAMT))
+imeans <- ddply(tDAMT, .(HINC), summarize,  DAMT=mean(DAMT))
+genmeans <- ddply(tDAMT, .(GENDER), summarize,  DAMT=mean(DAMT))
+
+
+p <- ggplot(agemeans, aes(AGE, DAMT)) + geom_col(aes(fill = AGE))
+l <- ggplot(homemeans, aes(HOME, DAMT)) + geom_col(aes(fill = HOME))
+n <- ggplot(imeans, aes(HINC, DAMT)) + geom_col(aes(fill = HINC))
+m <- ggplot(genmeans[2:6,], aes(GENDER, DAMT)) + geom_col(aes(fill = GENDER))
+
+
+grid.arrange(p,l,n,m, nrow=2, ncol=2)
+
+```
+
+
+Next we will explore our census data which reflects the donors nieghborhood characteristics. This includes median age, median person per household, median homevalue, median household income, median years of school completed. We bucketed many of these values into evenly sized buckets to try and produce means within each age, homevalue, income and years of school completed brackets. 
+
+Age, persons per household, income per household, appear to not have much of a relationship to donation amount. Where as homevalue and Homevalue appear to have positive correlations to donation amount. 
+
+
+```{r EDA_REG_3}
+
+
+#Bucketing MEDAGE to 8 buckets
+v <- c(seq(min(tDAMT$MEDAGE), max(tDAMT$MEDAGE), max(tDAMT$MEDAGE)/7))
+tDAMT$MEDAGE_b = findInterval(tDAMT$MEDAGE,v)
+agemeans <- ddply(tDAMT, .(MEDAGE_b), summarize,  DAMT=mean(DAMT))
+
+#Bucketing MEDhval to 10 buckets
+v <- c(seq(min(tDAMT$MEDHVAL), max(tDAMT$MEDHVAL), max(tDAMT$MEDHVAL)/10))
+tDAMT$MEDHVAL_b = findInterval(tDAMT$MEDHVAL,v)
+medhval <- ddply(tDAMT, .(MEDHVAL_b), summarize,  DAMT=mean(DAMT))
+
+#Bucketing MEDINC to ten buckets
+v <- c(seq(min(tDAMT$MEDINC), max(tDAMT$MEDINC), max(tDAMT$MEDINC)/9))
+tDAMT$MEDINC_b = findInterval(tDAMT$MEDINC,v)
+medincb <- ddply(tDAMT, .(MEDINC_b), summarize,  DAMT=mean(DAMT))
+
+# Bucketing median education
+v <- c(seq(min(tDAMT$MEDEDUC), max(tDAMT$MEDEDUC), max(tDAMT$MEDEDUC)/9))
+tDAMT$MEDEDUC_b = findInterval(tDAMT$MEDEDUC,v)
+mededuc_b <- ddply(tDAMT, .(MEDEDUC_b), summarize,  DAMT=mean(DAMT))
+
+
+p <- ggplot(agemeans, aes(MEDAGE_b, DAMT)) + geom_col(aes(fill = MEDAGE_b))
+l <- ggplot(tDAMT, aes(MEDPPH, DAMT)) + geom_point(aes(fill = MEDPPH))
+n <- ggplot(medhval, aes(MEDHVAL_b, DAMT)) + geom_col(aes(fill = MEDHVAL_b))
+m <- ggplot(medincb, aes(MEDINC_b, DAMT)) + geom_col(aes(fill = MEDINC_b))
+o <- ggplot(mededuc_b, aes(MEDEDUC_b, DAMT)) + geom_col(aes(fill = MEDEDUC_b))
+q <- ggplot(tDAMT, aes(MEDEDUC, DAMT)) + geom_point(aes(fill = MEDEDUC))
+
+
+grid.arrange(p,l,n,m, nrow=2, ncol=2)
+grid.arrange(o,q, nrow=1, ncol=2)
+
+```
+
+
+Finally we will explore promotion history file data. This includes lifetime number of promotions recieved, number of promotions recieved in the last month. 
+
+We bucketed both of these into logical order and present two plots for each. For the total number of promotions we noticed a negative trend, that seems to be broken in the middle with some sort of sweet spot, which equates to the 7th/8th bucket. This then falls sharply afterward indicating somesort of non-linear relationship. 
+
+For promotions in the last twelve months, it seems to increase intially then fall off rapidly. This may indicate the need to model these in two parts. 
+
+```{r EDA_REG_4}
+
+v <- c(seq(min(tDAMT$NUMPROM), max(tDAMT$NUMPROM), max(tDAMT$NUMPROM)/10))
+tDAMT$NUMPROM_b = findInterval(tDAMT$NUMPROM,v)
+NUMPROM_b <- ddply(tDAMT, .(NUMPROM_b), summarize,  DAMT=mean(DAMT))
+
+v <- c(seq(min(tDAMT$NUMPRM12), max(tDAMT$NUMPRM12), max(tDAMT$NUMPRM12)/10))
+tDAMT$NUMPRM12_b = findInterval(tDAMT$NUMPRM12,v)
+NUMPRM12_b <- ddply(tDAMT, .(NUMPRM12_b), summarize,  DAMT=mean(DAMT))
+
+l <- ggplot(tDAMT, aes(NUMPROM, DAMT)) + geom_col()
+m <- ggplot(NUMPROM_b, aes(NUMPROM_b, DAMT)) + geom_col()
+
+n <- ggplot(tDAMT, aes(NUMPRM12, DAMT)) + geom_col()
+o <- ggplot(NUMPRM12_b, aes(NUMPRM12_b, DAMT)) + geom_col()
+
+grid.arrange(l,m, nrow=1, ncol=2)
+grid.arrange(n,o, nrow=1, ncol=2)
+
+```
+
+For this section we will explore giving history as it relates to donation amount.
+We strong positive relationship between individual donation amount and total lifetime donations. Conversely number of gifts is negatively related to donation amount. This may be that those with high lifetime donations make consistently above average donations, where as those who have made large number of gifts donate less on average. 
+
+Interestingly last donation amount and maximum donation both seem to positively related to donation amount. Number of months since the last donation doesn't seem to effect donation amount. 
+
+
+```{r EDA_REG_5}
+
+# Number of gifts buckets 
+v <- c(seq(min(tDAMT$NGIFTALL), max(tDAMT$NGIFTALL), max(tDAMT$NGIFTALL)/20))
+tDAMT$NGIFTALL_b = findInterval(tDAMT$NGIFTALL,v)
+NGIFTALL_b <- ddply(tDAMT, .(NGIFTALL_b), summarize,  DAMT=mean(DAMT))
+
+# Dollar amount of lifetime gifts
+v <- c(seq(min(tDAMT$RAMNTALL), max(tDAMT$RAMNTALL), max(tDAMT$RAMNTALL)/10))
+tDAMT$RAMNTALL_b = findInterval(tDAMT$RAMNTALL,v)
+RAMNTALL_b <- ddply(tDAMT, .(RAMNTALL_b), summarize,  DAMT=mean(DAMT))
+
+
+n <- ggplot(tDAMT, aes(RAMNTALL, DAMT)) + geom_point()
+k <- ggplot(RAMNTALL_b, aes(RAMNTALL_b, DAMT)) + geom_col()
+
+l <- ggplot(tDAMT, aes(NGIFTALL, DAMT)) + geom_col()
+m <- ggplot(NGIFTALL_b, aes(NGIFTALL_b, DAMT)) + geom_col()
+
+o <- ggplot(tDAMT, aes(MAXRAMNT, DAMT)) + geom_point()
+p <-ggplot(tDAMT, aes(LASTGIFT, DAMT)) + geom_point()
+
+TDON <- ddply(tDAMT, .(TDON), summarize,  DAMT=mean(DAMT))
+q <-ggplot(TDON, aes(TDON, DAMT)) + geom_col()
+
+
+grid.arrange(n,k,l,m, nrow=2, ncol=2)
+grid.arrange(o,p,q, nrow=2, ncol=2)
+
+```
+
+Lastly we will explore recency, frequency and amount of donations and how they effect donation amount. The different codes correspond with different types of donor frequency. 
+
+As we can see recency indicates active ("A") donors, New ("N"), First time donors("F") and ("L") Lapsing donors donate above average amounts. Where as ("S") or star donors seem to donate less on average. This is consistent with two groups of donors, those who donate above average less often, and those who donate lower amounts more often. 
+
+Frequency seems to tell the same story with a steep negative correlation to donation amount. Where as amount of the last gift seems to have a strong relationship with donation amount. Those who settle on an amount range are likely to stick to it. 
+
+
+```{r EDA_REG_6}
+
+tDAMT$Recency <- as.factor(substring(tDAMT$RFA_96, 1, 1)) #Index and n chars
+train$Recency <- as.factor(substring(train$RFA_96, 1, 1))
+
+tDAMT$Freq <- as.factor(substring(tDAMT$RFA_96, 2, 2)) #Index and n chars
+train$Freq <- as.factor(substring(train$RFA_96, 2, 2))
+
+tDAMT$Amtcode <- as.factor(substring(tDAMT$RFA_96, 3, 3)) #Index and n chars
+train$Amtcode <- as.factor(substring(train$RFA_96, 3, 3))
+
+
+Recency <- ddply(tDAMT, .(Recency), summarize,  DAMT=mean(DAMT))
+q <-ggplot(Recency, aes(Recency, DAMT)) + geom_col(aes(fill=Recency)) + geom_hline(yintercept = mean(tDAMT$DAMT))
+
+
+Freq <- ddply(tDAMT, .(Freq), summarize,  DAMT=mean(DAMT))
+r <-ggplot(Freq, aes(Freq, DAMT)) + geom_col(aes(fill=Freq)) + geom_hline(yintercept = mean(tDAMT$DAMT))
+
+Amtcode <- ddply(tDAMT, .(Amtcode), summarize,  DAMT=mean(DAMT))
+target <- c("B", "C", "D","E","F","G")
+Amtcode <- Amtcode[match(target, Amtcode$Amtcode),]
+m <-ggplot(Amtcode, aes(Amtcode, DAMT)) + geom_col(aes(fill=Amtcode)) +        geom_hline(yintercept = mean(tDAMT$DAMT))
+
+             
+grid.arrange(q,r,m, nrow=2, ncol=2)
+
+```
+
+
+## EDA for Classification modeling of Donation Probability
+
+
+Next we will explore the same or similar variables on the whole dataset with the goal of identifying who is most likely to donate, IE has the highest probability of DONR = 1. 
+
+As we can see age seems to follow a non linear relationship, with less donations from those 20 - 40, and more than average response through 40 - 80, and then tailing off again. 
+
+Household income was positively associated with response rates. 
+
+Homeownership, and gender didn't seem to indicate higher reponse rates. 
+
+```{r EDA_CLASS1}
+agemeans <- ddply(train, .(AGE), summarize,  DONR=mean(DONR))
+homemeans <- ddply(train, .(HOME), summarize,  DONR=mean(DONR))
+imeans <- ddply(train, .(HINC), summarize,  DONR=mean(DONR))
+genmeans <- ddply(train, .(GENDER), summarize,  DONR=mean(DONR))
+
+
+p <- ggplot(agemeans, aes(AGE, DONR)) + geom_col(aes(fill = AGE))+
+  geom_hline(yintercept = mean(train$DONR))
+l <- ggplot(homemeans, aes(HOME, DONR)) + geom_col(aes(fill = HOME))+
+  geom_hline(yintercept = mean(train$DONR))
+n <- ggplot(imeans, aes(HINC, DONR)) + geom_col(aes(fill = HINC))+
+  geom_hline(yintercept = mean(train$DONR))
+m <- ggplot(genmeans[2:6,], aes(GENDER, DONR)) + geom_col(aes(fill = GENDER))+
+  geom_hline(yintercept = mean(train$DONR))
+
+
+grid.arrange(p,l,n,m, nrow=2, ncol=2)
+
+```
+
+
+Next we will explore neighborhood characteristics for response rates. We can see age, median income, and home value seems to positvely associated with response rates. 
+
+Education and persons in the household seem to be a mixed bag with no descernable pattern. 
+
+
+```{r EDA_CLASS2}
+
+#Bucketing MEDAGE to 8 buckets
+v <- c(seq(min(train$MEDAGE), max(train$MEDAGE), max(train$MEDAGE)/7))
+train$MEDAGE_b = findInterval(train$MEDAGE,v)
+agemeans <- ddply(train, .(MEDAGE_b), summarize,  DONR=mean(DONR))
+
+#Bucketing MEDhval to 10 buckets
+v <- c(seq(min(train$MEDHVAL), max(train$MEDHVAL), max(train$MEDHVAL)/10))
+train$MEDHVAL_b = findInterval(train$MEDHVAL,v)
+medhval <- ddply(train, .(MEDHVAL_b), summarize,  DONR=mean(DONR))
+
+#Bucketing MEDINC to ten buckets
+v <- c(seq(min(train$MEDINC), max(train$MEDINC), max(train$MEDINC)/9))
+train$MEDINC_b = findInterval(train$MEDINC,v)
+medincb <- ddply(train, .(MEDINC_b), summarize,  DONR=mean(DONR))
+
+# Bucketing Persons Per Household
+v <- c(seq(min(train$MEDPPH), max(train$MEDPPH), max(train$MEDPPH)/5))
+train$MEDPPH_b = findInterval(train$MEDPPH,v)
+medpph_b <- ddply(train, .(MEDPPH_b), summarize,  DONR=mean(DONR))
+
+# Bucketing median education
+v <- c(seq(min(train$MEDEDUC), max(train$MEDEDUC), max(train$MEDEDUC)/9))
+train$MEDEDUC_b = findInterval(train$MEDEDUC,v)
+mededuc_b <- ddply(train, .(MEDEDUC_b), summarize,  DONR=mean(DONR))
+
+
+p <- ggplot(agemeans, aes(MEDAGE_b, DONR)) + geom_col(aes(fill = MEDAGE_b))+geom_hline(yintercept = mean(train$DONR))
+n <- ggplot(medhval, aes(MEDHVAL_b, DONR)) + geom_col(aes(fill = MEDHVAL_b))+geom_hline(yintercept = mean(train$DONR))
+m <- ggplot(medincb, aes(MEDINC_b, DONR)) + geom_col(aes(fill = MEDINC_b))+geom_hline(yintercept = mean(train$DONR))
+o <- ggplot(mededuc_b, aes(MEDEDUC_b, DONR)) + geom_col(aes(fill = MEDEDUC_b))+geom_hline(yintercept = mean(train$DONR))
+r <- ggplot(medpph_b, aes(MEDPPH_b, DONR)) + geom_col(aes(fill = MEDPPH_b))+geom_hline(yintercept = mean(train$DONR))
+
+
+grid.arrange(p,n,m, nrow=2, ncol=2)
+grid.arrange(o,r, nrow=1, ncol=2)
+
+
+```
+
+
+
+As we can see from the promotions history data, those who have been targeted before are more likely to respond to a future promotion. 
+
+```{r EDA_CLASS3}
+
+v <- c(seq(min(train$NUMPROM), max(train$NUMPROM), max(train$NUMPROM)/10))
+train$NUMPROM_b = findInterval(train$NUMPROM,v)
+NUMPROM_b <- ddply(train, .(NUMPROM_b), summarize,  DONR=mean(DONR))
+
+v <- c(seq(min(train$NUMPRM12), max(train$NUMPRM12), max(train$NUMPRM12)/10))
+train$NUMPRM12_b = findInterval(train$NUMPRM12,v)
+NUMPRM12_b <- ddply(train, .(NUMPRM12_b), summarize,  DONR=mean(DONR))
+
+l <- ggplot(train, aes(NUMPROM, DONR)) + geom_col()
+m <- ggplot(NUMPROM_b, aes(NUMPROM_b, DONR)) + geom_col()+ geom_hline(yintercept = mean(train$DONR))
+
+n <- ggplot(train, aes(NUMPRM12, DONR)) + geom_col() 
+o <- ggplot(NUMPRM12_b, aes(NUMPRM12_b, DONR)) + geom_col() + geom_hline(yintercept = mean(train$DONR))
+
+grid.arrange(l,m, nrow=1, ncol=2)
+grid.arrange(n,o, nrow=1, ncol=2)
+
+
+```
+
+When we look to our giving data and response rates we see a mixed story. Donation amounts, lifetime donations, and last donation amount don't seem to have much relationship to response.
+
+Total number of gifts is (NGIFTALL) positively associated with response rates, where as number of months sinc the last donation has a steep negative relationship to response rates. 
+
+
+```{r EDA_CLASS4}
+
+# Number of gifts buckets 
+v <- c(seq(min(train$NGIFTALL), max(train$NGIFTALL), max(train$NGIFTALL)/20))
+train$NGIFTALL_b = findInterval(train$NGIFTALL,v)
+NGIFTALL_b <- ddply(train, .(NGIFTALL_b), summarize,  DONR=mean(DONR))
+
+# Dollar amount of lifetime gifts
+v <- c(seq(min(train$RAMNTALL), max(train$RAMNTALL), max(train$RAMNTALL)/10))
+train$RAMNTALL_b = findInterval(train$RAMNTALL,v)
+RAMNTALL_b <- ddply(train, .(RAMNTALL_b), summarize,  DONR=mean(DONR))
+
+# Dollar amount max gift
+v <- c(seq(min(train$MAXRAMNT), max(train$MAXRAMNT), max(train$MAXRAMNT)/10))
+train$MAXRAMNT_b = findInterval(train$MAXRAMNT,v)
+MAXRAMNT_b <- ddply(train, .(MAXRAMNT_b), summarize,  DONR=mean(DONR))
+
+# Dollar amount last gift
+v <- c(seq(min(train$LASTGIFT), max(train$LASTGIFT), max(train$LASTGIFT)/10))
+train$LASTGIFT_b = findInterval(train$LASTGIFT,v)
+LASTGIFT_b <- ddply(train, .(LASTGIFT_b), summarize,  DONR=mean(DONR))
+
+k <- ggplot(RAMNTALL_b, aes(RAMNTALL_b, DONR)) + geom_col()+geom_hline(yintercept = mean(train$DONR))
+m <- ggplot(NGIFTALL_b, aes(NGIFTALL_b, DONR)) + geom_col()+ geom_hline(yintercept = mean(train$DONR))
+o <- ggplot(MAXRAMNT_b, aes(MAXRAMNT_b, DONR)) + geom_col()+ geom_hline(yintercept = mean(train$DONR))
+p <-ggplot(LASTGIFT_b, aes(LASTGIFT_b, DONR)) + geom_col()+ geom_hline(yintercept = mean(train$DONR))
+
+TDON <- ddply(train, .(TDON), summarize,  DONR=mean(DONR))
+q <-ggplot(TDON, aes(TDON, DONR)) + geom_col()+ geom_hline(yintercept = mean(train$DONR))
+
+
+grid.arrange(k,m,o,p, nrow=2, ncol=2)
+grid.arrange(q, nrow=2, ncol=2)
+
+
+```
+
+
+
+As we can see when it comes to frequency, those who have responded more often are more likely to respond, interestingly only star donors were above average responders. Finally, our small donation responders are by far more likely to respond to future campaigns. 
+
+
+
+```{r EDA_CLASS5}
+
+Recency <- ddply(train, .(Recency), summarize,  DONR=mean(DONR))
+q <-ggplot(Recency, aes(Recency, DONR)) + geom_col(aes(fill=Recency)) + geom_hline(yintercept = mean(train$DONR))
+
+
+Freq <- ddply(train, .(Freq), summarize,  DONR=mean(DONR))
+r <-ggplot(Freq, aes(Freq, DONR)) + geom_col(aes(fill=Freq)) + geom_hline(yintercept = mean(train$DONR))
+
+Amtcode <- ddply(train, .(Amtcode), summarize,  DONR=mean(DONR))
+target <- c("B", "C", "D","E","F","G")
+Amtcode <- Amtcode[match(target, Amtcode$Amtcode),]
+m <-ggplot(Amtcode, aes(Amtcode, DONR)) + geom_col(aes(fill=Amtcode)) +        geom_hline(yintercept = mean(train$DONR))
+
+             
+grid.arrange(q,r,m, nrow=2, ncol=2)
+```
+
+
+## Principle Components Analysis 
+
+Below we will conduct PCA on our initial datasets. Please note the only variables included in this dataset are the quantitative variables. As we can see our scree plots seem to indicate incremental gain from most of the principle components, we don't see a sharp drop in proportion of variance explained. It is interesting to note it takes 8-9 principle components to explain the variation in the data.
+
+This may indicate that there is information data from most of the variables, and that we will need a large combination to explain both classification and regression.  
+
+
+
+```{r PCA1 }
+
+pcadata <- train[,c(2:4,8:19)]
+pca = prcomp(pcadata, scale=TRUE)
+pr.var=pca$sdev ^2
+pve=pr.var/sum(pr.var)
+
+
+
+par(mfrow=c(1,2))
+
+plot(pve, xlab="Principal Component", ylab="Proportion of Variance Explained ", ylim=c(0,1),type='b', col = "Blue")
+
+plot(cumsum(pve), xlab="Principal Component ", ylab=" Cumulative Proportion of Variance Explained ", ylim=c(0,1), type='b', col = "Red")
+
+```
+
+
+
+
+
+
+
+
+
